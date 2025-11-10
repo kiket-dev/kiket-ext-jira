@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: sync_metrics_daily
+    description: "Daily sync job metrics per project"
+    columns:
+      - name: project_id
+      - name: sync_date
+      - name: total_jobs
+      - name: successful_jobs
+      - name: failed_jobs
+      - name: total_issues_synced
+      - name: total_comments_synced
+      - name: total_attachments_synced
+      - name: avg_job_duration_minutes
+      - name: success_rate_pct
+
+  - name: project_summary
+    description: "Summary statistics per Jira project"
+    columns:
+      - name: project_id
+      - name: jira_project_key
+      - name: kiket_project_id
+      - name: total_mappings
+      - name: active_mappings
+      - name: field_mappings_count
+      - name: status_mappings_count
+      - name: job_success_rate_pct
+
+  - name: webhook_processing
+    description: "Jira webhook delivery success rates"
+    columns:
+      - name: delivery_date
+      - name: webhook_event
+      - name: total_deliveries
+      - name: successful_deliveries
+      - name: failed_deliveries
+      - name: success_rate_pct

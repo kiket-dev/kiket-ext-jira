@@ -1,0 +1,377 @@
+module: jira_data
+version: "1.0"
+description: "Jira integration data storage for projects, issues, and sync state"
+
+tables:
+  projects:
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+        auto_increment: true
+      - name: jira_project_key
+        type: string
+        length: 100
+        null: false
+      - name: jira_project_id
+        type: string
+        length: 100
+      - name: jira_url
+        type: string
+        length: 512
+        null: false
+      - name: kiket_project_id
+        type: string
+        null: false
+      - name: sync_enabled
+        type: boolean
+        default: true
+      - name: sync_direction
+        type: string
+        length: 50
+        default: "bidirectional"
+      - name: sync_comments
+        type: boolean
+        default: true
+      - name: sync_attachments
+        type: boolean
+        default: true
+      - name: sync_labels
+        type: boolean
+        default: true
+      - name: auto_create_mappings
+        type: boolean
+        default: false
+      - name: registered_at
+        type: timestamp
+        null: false
+      - name: last_synced_at
+        type: timestamp
+      - name: created_at
+        type: timestamp
+        null: false
+      - name: updated_at
+        type: timestamp
+        null: false
+    indexes:
+      - name: idx_jira_projects_kiket
+        columns: [kiket_project_id]
+      - name: idx_jira_projects_key
+        columns: [jira_project_key]
+        unique: true
+
+  issue_mappings:
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+        auto_increment: true
+      - name: project_id
+        type: bigint
+        null: false
+      - name: jira_issue_key
+        type: string
+        length: 100
+        null: false
+      - name: jira_issue_id
+        type: string
+        length: 100
+      - name: kiket_issue_id
+        type: string
+        null: false
+      - name: sync_enabled
+        type: boolean
+        default: true
+      - name: last_jira_update
+        type: timestamp
+      - name: last_kiket_update
+        type: timestamp
+      - name: last_synced_at
+        type: timestamp
+      - name: created_at
+        type: timestamp
+        null: false
+      - name: updated_at
+        type: timestamp
+        null: false
+    indexes:
+      - name: idx_jira_issue_mapping
+        columns: [project_id, jira_issue_key]
+        unique: true
+      - name: idx_jira_kiket_issue
+        columns: [kiket_issue_id]
+      - name: idx_jira_sync_enabled
+        columns: [sync_enabled]
+
+  field_mappings:
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+        auto_increment: true
+      - name: project_id
+        type: bigint
+        null: false
+      - name: jira_field_id
+        type: string
+        length: 100
+        null: false
+      - name: jira_field_name
+        type: string
+        length: 255
+      - name: kiket_field_name
+        type: string
+        length: 255
+        null: false
+      - name: field_type
+        type: string
+        length: 50
+      - name: transform_function
+        type: text
+      - name: sync_direction
+        type: string
+        length: 50
+        default: "bidirectional"
+      - name: created_at
+        type: timestamp
+        null: false
+    indexes:
+      - name: idx_jira_field_mapping
+        columns: [project_id, jira_field_id]
+
+  status_mappings:
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+        auto_increment: true
+      - name: project_id
+        type: bigint
+        null: false
+      - name: jira_status_id
+        type: string
+        length: 100
+        null: false
+      - name: jira_status_name
+        type: string
+        length: 255
+      - name: kiket_status
+        type: string
+        length: 255
+        null: false
+      - name: sync_on_transition
+        type: boolean
+        default: true
+      - name: created_at
+        type: timestamp
+        null: false
+    indexes:
+      - name: idx_jira_status_mapping
+        columns: [project_id, jira_status_id]
+      - name: idx_jira_kiket_status
+        columns: [kiket_status]
+
+  sync_jobs:
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+        auto_increment: true
+      - name: project_id
+        type: bigint
+        null: false
+      - name: sync_type
+        type: string
+        length: 50
+        null: false
+      - name: sync_direction
+        type: string
+        length: 50
+        null: false
+      - name: status
+        type: string
+        length: 50
+        null: false
+      - name: issues_processed
+        type: integer
+        default: 0
+      - name: issues_total
+        type: integer
+      - name: fields_synced
+        type: integer
+        default: 0
+      - name: comments_synced
+        type: integer
+        default: 0
+      - name: attachments_synced
+        type: integer
+        default: 0
+      - name: errors
+        type: json
+      - name: started_at
+        type: timestamp
+      - name: completed_at
+        type: timestamp
+      - name: created_at
+        type: timestamp
+        null: false
+    indexes:
+      - name: idx_jira_sync_project
+        columns: [project_id]
+      - name: idx_jira_sync_status
+        columns: [status]
+      - name: idx_jira_sync_created
+        columns: [created_at]
+
+  webhook_deliveries:
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+        auto_increment: true
+      - name: event_type
+        type: string
+        length: 100
+      - name: webhook_event
+        type: string
+        length: 100
+      - name: issue_key
+        type: string
+        length: 100
+      - name: received_at
+        type: timestamp
+        null: false
+      - name: processed
+        type: boolean
+        default: false
+      - name: error
+        type: text
+      - name: payload
+        type: json
+      - name: created_at
+        type: timestamp
+        null: false
+    indexes:
+      - name: idx_jira_webhooks_event
+        columns: [webhook_event]
+      - name: idx_jira_webhooks_received
+        columns: [received_at]
+      - name: idx_jira_webhooks_processed
+        columns: [processed]
+
+  attachments:
+    columns:
+      - name: id
+        type: bigint
+        primary_key: true
+        auto_increment: true
+      - name: mapping_id
+        type: bigint
+        null: false
+      - name: jira_attachment_id
+        type: string
+        length: 100
+        null: false
+      - name: kiket_attachment_id
+        type: string
+        length: 100
+      - name: filename
+        type: string
+        length: 512
+      - name: file_size
+        type: bigint
+      - name: mime_type
+        type: string
+        length: 100
+      - name: direction
+        type: string
+        length: 50
+      - name: mirrored_at
+        type: timestamp
+        null: false
+      - name: created_at
+        type: timestamp
+        null: false
+    indexes:
+      - name: idx_jira_attachments_mapping
+        columns: [mapping_id]
+      - name: idx_jira_attachments_jira_id
+        columns: [jira_attachment_id]
+
+permissions:
+  - role: user
+    tables:
+      projects:
+        - read
+      issue_mappings:
+        - read
+      field_mappings:
+        - read
+      status_mappings:
+        - read
+      sync_jobs:
+        - read
+      webhook_deliveries:
+        - read
+      attachments:
+        - read
+    conditions:
+      - "kiket_project_id IN (user.accessible_projects)"
+
+  - role: manager
+    tables:
+      projects:
+        - read
+        - write
+      issue_mappings:
+        - read
+        - write
+        - delete
+      field_mappings:
+        - read
+        - write
+        - delete
+      status_mappings:
+        - read
+        - write
+        - delete
+      sync_jobs:
+        - read
+        - write
+      webhook_deliveries:
+        - read
+      attachments:
+        - read
+        - write
+    conditions:
+      - "kiket_project_id IN (user.managed_projects)"
+
+  - role: admin
+    tables:
+      projects:
+        - read
+        - write
+        - delete
+      issue_mappings:
+        - read
+        - write
+        - delete
+      field_mappings:
+        - read
+        - write
+        - delete
+      status_mappings:
+        - read
+        - write
+        - delete
+      sync_jobs:
+        - read
+        - write
+        - delete
+      webhook_deliveries:
+        - read
+        - delete
+      attachments:
+        - read
+        - write
+        - delete

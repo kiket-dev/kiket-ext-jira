@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: jira_data
+    description: "Jira extension custom data tables"
+    tables:
+      - name: projects
+      - name: issue_mappings
+      - name: field_mappings
+      - name: status_mappings
+      - name: sync_jobs
+      - name: webhook_deliveries
+      - name: attachments
