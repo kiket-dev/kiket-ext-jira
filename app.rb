@@ -411,7 +411,7 @@ class JiraExtension < Sinatra::Base
   get "/sync/jobs" do
     project_id = params["project_id"]
     status_filter = params["status"]
-    limit = [params.fetch("limit", "20").to_i, 100].min
+    limit = [ params.fetch("limit", "20").to_i, 100 ].min
 
     jobs = settings.sync_jobs
     jobs = jobs.select { |j| j[:project_id] == project_id.to_i } if project_id
@@ -505,7 +505,7 @@ class JiraExtension < Sinatra::Base
   end
 
   get "/webhooks/deliveries" do
-    limit = [params.fetch("limit", "50").to_i, 100].min
+    limit = [ params.fetch("limit", "50").to_i, 100 ].min
     offset = params.fetch("offset", "0").to_i
 
     deliveries = settings.webhook_deliveries.reverse[offset, limit] || []
@@ -622,7 +622,7 @@ class JiraExtension < Sinatra::Base
 
     # Find project mapping
     project = settings.projects.values.find { |p| p[:jira_project_key] == project_key }
-    return unless project && project[:auto_create_mappings]
+    nil unless project && project[:auto_create_mappings]
 
     # Would create Kiket issue and mapping here
   end
@@ -647,7 +647,7 @@ class JiraExtension < Sinatra::Base
 
     # Find mapping
     mapping = settings.issue_mappings.values.find { |m| m[:jira_issue_key] == issue_key }
-    return unless mapping
+    nil unless mapping
 
     # Would handle deletion sync based on project settings
   end
@@ -662,7 +662,7 @@ class JiraExtension < Sinatra::Base
     return unless mapping
 
     project = settings.projects[mapping[:project_id]]
-    return unless project && project[:sync_comments]
+    nil unless project && project[:sync_comments]
 
     # Would sync comment to Kiket here
   end
