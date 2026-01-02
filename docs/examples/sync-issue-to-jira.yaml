@@ -1,0 +1,18 @@
+title: Sync Issues to Jira
+description: Create corresponding Jira issues when Kiket issues are created
+
+automations:
+  - name: jira_sync_create
+    trigger:
+      event: issue.created
+      conditions:
+        - field: project.settings.jira_sync
+          operator: eq
+          value: true
+    actions:
+      - extension: dev.kiket.ext.jira
+        command: jira.createIssue
+        params:
+          project_key: "{{ project.settings.jira_project }}"
+          summary: "{{ issue.title }}"
+          description: "{{ issue.description }}"
