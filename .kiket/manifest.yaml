@@ -192,30 +192,10 @@ extension:
     burst: 20
   assets:
     icon: ./public/icon.svg
+  hosting: internal
   tags:
     - integration
     - jira
     - issue-tracking
     - project-management
     - atlassian
-
-deployment:
-  runtime: cloud_run
-  region: ${KIKET_REGION:-europe-west1}
-  image: ${JIRA_IMAGE:-europe-west1-docker.pkg.dev/kiket-471917/kiket-extensions/kiket-ext-jira:latest}
-  resources:
-    cpu: "1"
-    memory: "512Mi"
-    concurrency: 10
-  min_instances: 0
-  max_instances: 10
-  vpc:
-    connector: ${KIKET_VPC_CONNECTOR}
-    egress: all-traffic
-  secret_keys:
-    - JIRA_WEBHOOK_SECRET
-    - JIRA_ACCESS_TOKEN
-    - JIRA_API_TOKEN
-  env:
-    RACK_ENV: production
-    PORT: "9292"
