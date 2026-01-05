@@ -1,153 +1,221 @@
-id: dev.kiket.ext.jira
-name: "Jira Integration"
-version: "1.0.0"
-description: "Jira integration for bidirectional issue sync, status mapping, and attachment mirroring"
-author: "Kiket"
-homepage: "https://github.com/kiket-dev/kiket-ext-jira"
-icon: "https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png"
-
-api:
-  base_url: "{{EXTENSION_BASE_URL}}"
-  health_endpoint: "/health"
-  timeout_seconds: 30
-
-webhooks:
-  - event: "issue.created"
-    endpoint: "/webhooks/kiket/issue_created"
-    description: "Create Jira issue when Kiket issue is created"
-
-  - event: "issue.transitioned"
-    endpoint: "/webhooks/kiket/issue_transitioned"
-    description: "Sync status changes to Jira"
-
-  - event: "issue.updated"
-    endpoint: "/webhooks/kiket/issue_updated"
-    description: "Sync issue updates to Jira"
-
-  - event: "issue.commented"
-    endpoint: "/webhooks/kiket/issue_commented"
-    description: "Sync comments to Jira"
-
-jira_webhooks:
-  endpoint: "/webhooks/jira"
-  events:
-    - "jira:issue_created"
-    - "jira:issue_updated"
-    - "jira:issue_deleted"
-    - "comment_created"
-    - "comment_updated"
-
-commands:
-  - id: "jira.syncIssue"
-    title: "Sync with Jira"
-    description: "Trigger sync for this issue"
-    category: "Jira"
-    context: "issue"
-
-  - id: "jira.createMapping"
-    title: "Map to Jira Issue"
-    description: "Create mapping to existing Jira issue"
-    category: "Jira"
-    context: "issue"
-
-  - id: "jira.viewInJira"
-    title: "View in Jira"
-    description: "Open mapped Jira issue"
-    category: "Jira"
-    context: "issue"
-
-  - id: "jira.syncProject"
-    title: "Sync Jira Project"
-    description: "Trigger full project sync"
-    category: "Jira"
-
-  - id: "jira.exportMappings"
-    title: "Export Mappings"
-    description: "Export issue mappings as CSV"
-    category: "Jira"
-
-custom_data:
-  modules:
-    - jira_data
-
-secrets:
-  - name: "JIRA_URL"
-    description: "Jira instance URL (e.g., https://company.atlassian.net)"
+model_version: "1.0"
+extension:
+  id: dev.kiket.ext.jira
+  name: Jira Integration
+  version: 1.0.0
+  description: Jira integration for bidirectional issue sync, status mapping, and attachment mirroring
+  author: Kiket
+  homepage: https://github.com/kiket-dev/kiket-ext-jira
+  icon: https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png
+  delivery: http
+  callback:
+    url: ${EXTENSION_BASE_URL}
+    secret: env:JIRA_WEBHOOK_SECRET
+    timeout: 30000
     required: true
+  activationEvents:
+    - issue.created
+    - issue.transitioned
+    - issue.updated
+    - issue.commented
+  permissions:
+    - issues:read
+    - issues:write
+    - comments:read
+    - comments:write
+    - attachments:read
+    - attachments:write
+    - projects:read
+  capabilities:
+    - issue-sync
+    - bidirectional-sync
+    - status-mapping
+    - attachment-mirroring
+    - webhooks
+  hooks:
+    - event: issue.created
+      endpoint: /webhooks/kiket/issue_created
+      timeout: 5000
+      retries: 1
+      description: Create Jira issue when Kiket issue is created
+    - event: issue.transitioned
+      endpoint: /webhooks/kiket/issue_transitioned
+      timeout: 5000
+      retries: 1
+      description: Sync status changes to Jira
+    - event: issue.updated
+      endpoint: /webhooks/kiket/issue_updated
+      timeout: 5000
+      retries: 1
+      description: Sync issue updates to Jira
+    - event: issue.commented
+      endpoint: /webhooks/kiket/issue_commented
+      timeout: 5000
+      retries: 1
+      description: Sync comments to Jira
+  contributes:
+    commands:
+      - command: jira.syncIssue
+        title: Sync with Jira
+        description: Trigger sync for this issue
+        category: Jira
+        icon: bi-arrow-repeat
+        keywords: ["jira", "sync", "issue"]
+        context: issue
+        handler:
+          type: extension_event
+          event: jira.syncIssue
+      - command: jira.createMapping
+        title: Map to Jira Issue
+        description: Create mapping to existing Jira issue
+        category: Jira
+        icon: bi-link-45deg
+        keywords: ["jira", "map", "link"]
+        context: issue
+        handler:
+          type: extension_event
+          event: jira.createMapping
+      - command: jira.viewInJira
+        title: View in Jira
+        description: Open mapped Jira issue
+        category: Jira
+        icon: bi-box-arrow-up-right
+        keywords: ["jira", "view", "open"]
+        context: issue
+        handler:
+          type: extension_event
+          event: jira.viewInJira
+      - command: jira.syncProject
+        title: Sync Jira Project
+        description: Trigger full project sync
+        category: Jira
+        icon: bi-arrow-repeat
+        keywords: ["jira", "sync", "project"]
+        handler:
+          type: extension_event
+          event: jira.syncProject
+      - command: jira.exportMappings
+        title: Export Mappings
+        description: Export issue mappings as CSV
+        category: Jira
+        icon: bi-download
+        keywords: ["jira", "export", "csv"]
+        handler:
+          type: extension_event
+          event: jira.exportMappings
+  jira_webhooks:
+    endpoint: /webhooks/jira
+    events:
+      - jira:issue_created
+      - jira:issue_updated
+      - jira:issue_deleted
+      - comment_created
+      - comment_updated
+  custom_data:
+    modules:
+      - jira_data
+  configuration:
+    # Jira Instance
+    JIRA_URL:
+      type: string
+      secret: false
+      required: true
+      label: Jira Instance URL
+      description: "Jira instance URL (e.g., https://company.atlassian.net)"
+    # Authentication - OAuth 2.0 (3LO)
+    JIRA_ACCESS_TOKEN:
+      type: string
+      secret: true
+      required: true
+      label: Jira Access Token
+      description: Atlassian OAuth 2.0 access token for API access
+      oauth:
+        provider: atlassian
+        grant_type: authorization_code
+        authorization_url: https://auth.atlassian.com/authorize
+        token_url: https://auth.atlassian.com/oauth/token
+        scopes:
+          - read:jira-work
+          - write:jira-work
+          - read:jira-user
+          - offline_access
+        token_path: access_token
+        refresh_token_path: refresh_token
+        expires_in_path: expires_in
+        extra_params:
+          audience: api.atlassian.com
+          prompt: consent
+        # Uses platform's Atlassian OAuth app (KIKET_ATLASSIAN_CLIENT_ID/SECRET)
+    # Legacy API Token Authentication (alternative to OAuth)
+    JIRA_EMAIL:
+      type: string
+      secret: false
+      required: false
+      label: Jira Email
+      description: Jira user email (required if using API token instead of OAuth)
+    JIRA_API_TOKEN:
+      type: string
+      secret: true
+      required: false
+      label: Jira API Token
+      description: Jira API token (alternative to OAuth - requires email)
+    # Webhook Secret
+    JIRA_WEBHOOK_SECRET:
+      type: string
+      secret: true
+      required: false
+      label: Jira Webhook Secret
+      description: Secret for verifying Jira webhook signatures
+    # Settings
+    default_sync_direction:
+      type: string
+      default: "bidirectional"
+      label: Default Sync Direction
+      description: Default synchronization direction (bidirectional, jira_to_kiket, kiket_to_jira)
+    auto_create_mappings:
+      type: boolean
+      default: "false"
+      label: Auto-create Mappings
+      description: Automatically create issue mappings when Jira issues are created
+    sync_comments:
+      type: boolean
+      default: "true"
+      label: Sync Comments
+      description: Synchronize comments between Jira and Kiket
+    sync_attachments:
+      type: boolean
+      default: "true"
+      label: Sync Attachments
+      description: Mirror attachments between Jira and Kiket
+  rate_limiting:
+    requests_per_minute: 60
+    burst: 20
+  assets:
+    icon: ./public/icon.svg
+  tags:
+    - integration
+    - jira
+    - issue-tracking
+    - project-management
+    - atlassian
 
-  - name: "JIRA_EMAIL"
-    description: "Jira user email for authentication"
-    required: true
-
-  - name: "JIRA_API_TOKEN"
-    description: "Jira API token for authentication"
-    required: true
-    secret: true
-
-  - name: "JIRA_WEBHOOK_SECRET"
-    description: "Secret for verifying Jira webhook signatures"
-    required: false
-    secret: true
-
-rate_limiting:
-  requests_per_minute: 60
-  burst: 20
-
-dependencies:
-  - kiket_version: ">=1.0.0"
-
-permissions:
-  - scope: "issues"
-    actions: ["read", "write"]
-    description: "Required for issue synchronization"
-
-  - scope: "comments"
-    actions: ["read", "write"]
-    description: "Required for comment synchronization"
-
-  - scope: "attachments"
-    actions: ["read", "write"]
-    description: "Required for attachment mirroring"
-
-  - scope: "projects"
-    actions: ["read"]
-    description: "Required for project-level configuration"
-
-settings:
-  - name: "default_sync_direction"
-    type: "select"
-    label: "Default Sync Direction"
-    description: "Default synchronization direction for new projects"
-    options:
-      - value: "bidirectional"
-        label: "Bidirectional"
-      - value: "jira_to_kiket"
-        label: "Jira to Kiket Only"
-      - value: "kiket_to_jira"
-        label: "Kiket to Jira Only"
-    default: "bidirectional"
-
-  - name: "auto_create_mappings"
-    type: "boolean"
-    label: "Auto-create Mappings"
-    description: "Automatically create issue mappings when Jira issues are created"
-    default: false
-
-  - name: "sync_comments"
-    type: "boolean"
-    label: "Sync Comments"
-    description: "Synchronize comments between Jira and Kiket"
-    default: true
-
-  - name: "sync_attachments"
-    type: "boolean"
-    label: "Sync Attachments"
-    description: "Mirror attachments between Jira and Kiket"
-    default: true
-
-tags:
-  - "integration"
-  - "jira"
-  - "issue-tracking"
-  - "project-management"
-  - "atlassian"
+deployment:
+  runtime: cloud_run
+  region: ${KIKET_REGION:-europe-west1}
+  image: ${JIRA_IMAGE:-europe-west1-docker.pkg.dev/kiket-471917/kiket-extensions/kiket-ext-jira:latest}
+  resources:
+    cpu: "1"
+    memory: "512Mi"
+    concurrency: 10
+  min_instances: 0
+  max_instances: 10
+  vpc:
+    connector: ${KIKET_VPC_CONNECTOR}
+    egress: all-traffic
+  secret_keys:
+    - JIRA_WEBHOOK_SECRET
+    - JIRA_ACCESS_TOKEN
+    - JIRA_API_TOKEN
+  env:
+    RACK_ENV: production
+    PORT: "9292"
