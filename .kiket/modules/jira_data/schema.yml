@@ -1,4 +1,4 @@
-module: jira_data
+module: dev.kiket.ext.jira.data
 version: "1.0"
 description: "Jira integration data storage for projects, issues, and sync state"
 

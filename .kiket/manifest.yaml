@@ -10,7 +10,7 @@ extension:
   delivery: http
   callback:
     url: ${EXTENSION_BASE_URL}
-    secret: env:JIRA_WEBHOOK_SECRET
+    secret: env.JIRA_WEBHOOK_SECRET
     timeout: 30000
     required: true
   activationEvents:
@@ -145,7 +145,8 @@ extension:
         extra_params:
           audience: api.atlassian.com
           prompt: consent
-        # Uses platform's Atlassian OAuth app (KIKET_ATLASSIAN_CLIENT_ID/SECRET)
+        client_id: ext.KIKET_ATLASSIAN_CLIENT_ID
+        client_secret: ext.KIKET_ATLASSIAN_CLIENT_SECRET
     # Legacy API Token Authentication (alternative to OAuth)
     JIRA_EMAIL:
       type: string
@@ -190,6 +191,77 @@ extension:
   rate_limiting:
     requests_per_minute: 60
     burst: 20
+  # Setup Wizard - guides users through extension configuration
+  setup:
+    # Step 1: Jira Instance URL
+    - configure:
+        title: Connect to Jira
+        description: Enter your Jira Cloud instance URL
+        required: true
+        collect:
+          - JIRA_URL
+
+    # Step 2: OAuth 2.0 Authorization
+    - secrets:
+        title: Authorize Jira Access
+        description: Connect your Atlassian account to enable issue sync
+        required: true
+        collect:
+          - JIRA_ACCESS_TOKEN
+
+    # Step 3: Sync Configuration
+    - configure:
+        title: Configure Sync Settings
+        description: Set up how issues are synchronized between Jira and Kiket
+        collect:
+          - default_sync_direction
+          - sync_comments
+          - sync_attachments
+          - auto_create_mappings
+
+    # Step 4: Test Connection
+    - test:
+        title: Test Connection
+        description: Verify your Jira connection is working
+        action: jira.testConnection
+        successMessage: Successfully connected to Jira! Projects are accessible.
+        required: false
+
+    # Step 5: Getting Started Info
+    - info:
+        title: Setup Complete
+        content: |
+          ## You're all set! 🎉
+
+          Your Jira integration is now configured. Here's what happens next:
+
+          - **Issue sync** will keep Kiket and Jira in sync
+          - **Status mappings** can be configured in project settings
+          - **Comments and attachments** will be mirrored automatically
+
+          ### Next Steps
+
+          1. Configure status mappings in Project Settings → Jira
+          2. Select which Jira projects to sync
+          3. Import existing Jira issues if needed
+
+          ### Available Commands
+
+          - `/jira.syncIssue` - Manually sync an issue
+          - `/jira.createMapping` - Link to existing Jira issue
+          - `/jira.viewInJira` - Open issue in Jira
+        links:
+          - label: Atlassian Admin Console
+            url: https://admin.atlassian.com/
+            icon: gear
+          - label: Kiket Documentation
+            url: https://docs.kiket.dev/extensions/jira
+            icon: book
+
+  custom_data:
+    permissions:
+      - module: dev.kiket.ext.jira.data
+        operations: [read, write]
   assets:
     icon: ./public/icon.svg
   hosting: internal
