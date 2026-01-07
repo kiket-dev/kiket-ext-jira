@@ -115,18 +115,20 @@ extension:
     modules:
       - jira_data
   configuration:
-    # Jira Instance
+    # Jira Instance - org-wide configuration (shared across all projects)
     JIRA_URL:
       type: string
       secret: false
       required: true
+      scope: extension
       label: Jira Instance URL
       description: "Jira instance URL (e.g., https://company.atlassian.net)"
-    # Authentication - OAuth 2.0 (3LO)
+    # Authentication - OAuth 2.0 (3LO) - org-wide credentials
     JIRA_ACCESS_TOKEN:
       type: string
       secret: true
       required: true
+      scope: extension
       label: Jira Access Token
       description: Atlassian OAuth 2.0 access token for API access
       oauth:
@@ -147,24 +149,27 @@ extension:
           prompt: consent
         client_id: ext.KIKET_ATLASSIAN_CLIENT_ID
         client_secret: ext.KIKET_ATLASSIAN_CLIENT_SECRET
-    # Legacy API Token Authentication (alternative to OAuth)
+    # Legacy API Token Authentication (alternative to OAuth) - org-wide
     JIRA_EMAIL:
       type: string
       secret: false
       required: false
+      scope: extension
       label: Jira Email
       description: Jira user email (required if using API token instead of OAuth)
     JIRA_API_TOKEN:
       type: string
       secret: true
       required: false
+      scope: extension
       label: Jira API Token
       description: Jira API token (alternative to OAuth - requires email)
-    # Webhook Secret
+    # Webhook Secret - org-wide
     JIRA_WEBHOOK_SECRET:
       type: string
       secret: true
       required: false
+      scope: extension
       label: Jira Webhook Secret
       description: Secret for verifying Jira webhook signatures
     # Settings
