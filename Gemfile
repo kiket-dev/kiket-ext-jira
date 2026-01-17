@@ -11,6 +11,9 @@ gem "kiket-sdk", github: "kiket-dev/kiket-ruby-sdk", branch: "main"
 gem "faraday", "~> 2.9"
 gem "faraday-multipart", "~> 1.0"
 
+# Base64 encoding (no longer in Ruby 3.4 default gems)
+gem "base64", "~> 0.3"
+
 group :development, :test do
   gem "rspec", "~> 3.13"
   gem "rack-test", "~> 2.1"
