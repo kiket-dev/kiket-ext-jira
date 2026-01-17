@@ -2,16 +2,33 @@
 
 ENV["RACK_ENV"] = "test"
 
+require "bundler/setup"
+Bundler.require(:default, :test)
+
 require "rspec"
-require "rack/test"
 require "webmock/rspec"
-require "vcr"
 
 require_relative "../app"
 
-RSpec.configure do |config|
-  config.include Rack::Test::Methods
+# Mock context for SDK handler testing
+def build_context(overrides = {})
+  events_logged = []
 
+  default_secrets = {
+    "JIRA_BASE_URL" => "https://kiket.atlassian.net",
+    "JIRA_EMAIL" => "test@kiket.dev",
+    "JIRA_API_TOKEN" => "test-api-token"
+  }
+
+  {
+    auth: { org_id: "test-org-123", user_id: "test-user-456" },
+    secret: ->(key) { default_secrets[key] || ENV[key] },
+    endpoints: double("endpoints", log_event: ->(event, data) { events_logged << { event: event, data: data } }),
+    events_logged: events_logged
+  }.merge(overrides)
+end
+
+RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
     expectations.include_chain_clauses_in_custom_matcher_descriptions = true
   end
@@ -24,28 +41,8 @@ RSpec.configure do |config|
   config.filter_run_when_matching :focus
   config.example_status_persistence_file_path = "spec/examples.txt"
   config.disable_monkey_patching!
-  config.warnings = true
   config.order = :random
   Kernel.srand config.seed
 
-  # Reset state between tests
-  config.before(:each) do
-    JiraExtension.settings.projects.clear
-    JiraExtension.settings.issue_mappings.clear
-    JiraExtension.settings.field_mappings.clear
-    JiraExtension.settings.status_mappings.clear
-    JiraExtension.settings.sync_jobs.clear
-    JiraExtension.settings.webhook_deliveries.clear
-    JiraExtension.settings.attachments.clear
-  end
-end
-
-VCR.configure do |config|
-  config.cassette_library_dir = "spec/fixtures/vcr_cassettes"
-  config.hook_into :webmock
-  config.configure_rspec_metadata!
-end
-
-def app
-  JiraExtension
+  WebMock.disable_net_connect!(allow_localhost: true)
 end

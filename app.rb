@@ -1,389 +1,507 @@
 # frozen_string_literal: true
 
-require "sinatra/base"
+require "kiket_sdk"
 require "json"
 require "faraday"
 require "faraday/multipart"
 require "base64"
+require "logger"
 
-class JiraExtension < Sinatra::Base
-  configure do
-    set :show_exceptions, false
-    set :raise_errors, false
+# Jira Integration Extension
+# Manages Jira project sync, issue mapping, field/status mapping, and webhooks
+class JiraExtension
+  REQUIRED_READ_SCOPES = %w[projects:read].freeze
+  REQUIRED_WRITE_SCOPES = %w[projects:write].freeze
+  REQUIRED_ISSUES_SCOPES = %w[issues:write].freeze
+  REQUIRED_SYNC_SCOPES = %w[sync:execute].freeze
+  REQUIRED_WEBHOOK_SCOPES = %w[webhooks:receive].freeze
+
+  def initialize
+    @sdk = KiketSDK.new
+    @logger = Logger.new($stdout)
+
+    # In-memory storage (production would use custom_data tables)
+    @projects = {}
+    @issue_mappings = {}
+    @field_mappings = {}
+    @status_mappings = {}
+    @sync_jobs = []
+    @webhook_deliveries = []
+    @attachments = {}
+
+    setup_handlers
   end
 
-  # Store for Jira data (in production, this would use custom_data tables)
-  configure do
-    set :projects, {}
-    set :issue_mappings, {}
-    set :field_mappings, {}
-    set :status_mappings, {}
-    set :sync_jobs, []
-    set :webhook_deliveries, []
-    set :attachments, {}
+  def app
+    @sdk
   end
 
-  # Health check
-  get "/health" do
-    content_type :json
-    { status: "ok", extension: "jira", version: "1.0.0" }.to_json
-  end
+  private
 
-  # Project Management
-
-  post "/projects/register" do
-    data = JSON.parse(request.body.read)
-
-    jira_project_key = data["jira_project_key"]
-    kiket_project_id = data["kiket_project_id"]
-    jira_url = data["jira_url"]
-
-    halt 400, { error: "Missing required fields" }.to_json unless jira_project_key && kiket_project_id && jira_url
-
-    project_id = settings.projects.length + 1
-
-    settings.projects[project_id] = {
-      id: project_id,
-      jira_project_key: jira_project_key,
-      jira_project_id: data["jira_project_id"],
-      jira_url: jira_url,
-      kiket_project_id: kiket_project_id,
-      sync_enabled: data.fetch("sync_enabled", true),
-      sync_direction: data.fetch("sync_direction", "bidirectional"),
-      sync_comments: data.fetch("sync_comments", true),
-      sync_attachments: data.fetch("sync_attachments", true),
-      sync_labels: data.fetch("sync_labels", true),
-      auto_create_mappings: data.fetch("auto_create_mappings", false),
-      registered_at: Time.now.utc.iso8601,
-      last_synced_at: nil
-    }
-
-    content_type :json
-    status 201
-    { status: "registered", project: settings.projects[project_id] }.to_json
-  end
-
-  get "/projects" do
-    kiket_project_id = params["kiket_project_id"]
-
-    projects = if kiket_project_id
-      settings.projects.select { |_, p| p[:kiket_project_id] == kiket_project_id }
-    else
-      settings.projects
+  def setup_handlers
+    # Project Management
+    @sdk.register("jira.projects.register", version: "v1", required_scopes: REQUIRED_WRITE_SCOPES) do |payload, context|
+      handle_register_project(payload, context)
     end
 
-    content_type :json
-    { projects: projects.values }.to_json
+    @sdk.register("jira.projects.list", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_list_projects(payload, context)
+    end
+
+    @sdk.register("jira.projects.get", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_get_project(payload, context)
+    end
+
+    @sdk.register("jira.projects.delete", version: "v1", required_scopes: REQUIRED_WRITE_SCOPES) do |payload, context|
+      handle_delete_project(payload, context)
+    end
+
+    # Issue Mapping
+    @sdk.register("jira.issues.map", version: "v1", required_scopes: REQUIRED_ISSUES_SCOPES) do |payload, context|
+      handle_map_issue(payload, context)
+    end
+
+    @sdk.register("jira.issues.mappings.list", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_list_issue_mappings(payload, context)
+    end
+
+    @sdk.register("jira.issues.mappings.update", version: "v1", required_scopes: REQUIRED_ISSUES_SCOPES) do |payload, context|
+      handle_update_issue_mapping(payload, context)
+    end
+
+    @sdk.register("jira.issues.mappings.delete", version: "v1", required_scopes: REQUIRED_ISSUES_SCOPES) do |payload, context|
+      handle_delete_issue_mapping(payload, context)
+    end
+
+    # Field Mapping
+    @sdk.register("jira.fields.map", version: "v1", required_scopes: REQUIRED_WRITE_SCOPES) do |payload, context|
+      handle_map_field(payload, context)
+    end
+
+    @sdk.register("jira.fields.mappings.list", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_list_field_mappings(payload, context)
+    end
+
+    @sdk.register("jira.fields.mappings.delete", version: "v1", required_scopes: REQUIRED_WRITE_SCOPES) do |payload, context|
+      handle_delete_field_mapping(payload, context)
+    end
+
+    # Status Mapping
+    @sdk.register("jira.status.map", version: "v1", required_scopes: REQUIRED_WRITE_SCOPES) do |payload, context|
+      handle_map_status(payload, context)
+    end
+
+    @sdk.register("jira.status.mappings.list", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_list_status_mappings(payload, context)
+    end
+
+    @sdk.register("jira.status.mappings.delete", version: "v1", required_scopes: REQUIRED_WRITE_SCOPES) do |payload, context|
+      handle_delete_status_mapping(payload, context)
+    end
+
+    # Issue Synchronization
+    @sdk.register("jira.sync.issue", version: "v1", required_scopes: REQUIRED_SYNC_SCOPES) do |payload, context|
+      handle_sync_issue(payload, context)
+    end
+
+    # Attachment Management
+    @sdk.register("jira.attachments.mirror", version: "v1", required_scopes: REQUIRED_ISSUES_SCOPES) do |payload, context|
+      handle_mirror_attachment(payload, context)
+    end
+
+    @sdk.register("jira.attachments.list", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_list_attachments(payload, context)
+    end
+
+    # Sync Jobs
+    @sdk.register("jira.sync.trigger", version: "v1", required_scopes: REQUIRED_SYNC_SCOPES) do |payload, context|
+      handle_trigger_sync(payload, context)
+    end
+
+    @sdk.register("jira.sync.jobs.list", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_list_sync_jobs(payload, context)
+    end
+
+    @sdk.register("jira.sync.jobs.get", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_get_sync_job(payload, context)
+    end
+
+    # Webhooks
+    @sdk.register("jira.webhooks.receive", version: "v1", required_scopes: REQUIRED_WEBHOOK_SCOPES) do |payload, context|
+      handle_jira_webhook(payload, context)
+    end
+
+    @sdk.register("jira.webhooks.kiket.issue_transitioned", version: "v1", required_scopes: REQUIRED_WEBHOOK_SCOPES) do |payload, context|
+      handle_kiket_issue_transitioned(payload, context)
+    end
+
+    @sdk.register("jira.webhooks.deliveries", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_list_webhook_deliveries(payload, context)
+    end
+
+    # Reports
+    @sdk.register("jira.reports.sync_metrics", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_sync_metrics(payload, context)
+    end
+
+    @sdk.register("jira.reports.mapping_status", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_mapping_status(payload, context)
+    end
+
+    @sdk.register("jira.export.mappings", version: "v1", required_scopes: REQUIRED_READ_SCOPES) do |payload, context|
+      handle_export_mappings(payload, context)
+    end
   end
 
-  get "/projects/:id" do
-    project_id = params[:id].to_i
-    project = settings.projects[project_id]
+  # Project Handlers
 
-    halt 404, { error: "Project not found" }.to_json unless project
+  def handle_register_project(payload, context)
+    jira_project_key = payload["jira_project_key"]
+    kiket_project_id = payload["kiket_project_id"]
+    jira_url = payload["jira_url"]
 
-    content_type :json
-    { project: project }.to_json
+    raise ArgumentError, "Missing required fields: jira_project_key, kiket_project_id, jira_url" unless jira_project_key && kiket_project_id && jira_url
+
+    project_id = @projects.length + 1
+
+    @projects[project_id] = {
+      id: project_id,
+      jira_project_key: jira_project_key,
+      jira_project_id: payload["jira_project_id"],
+      jira_url: jira_url,
+      kiket_project_id: kiket_project_id,
+      sync_enabled: payload.fetch("sync_enabled", true),
+      sync_direction: payload.fetch("sync_direction", "bidirectional"),
+      sync_comments: payload.fetch("sync_comments", true),
+      sync_attachments: payload.fetch("sync_attachments", true),
+      sync_labels: payload.fetch("sync_labels", true),
+      auto_create_mappings: payload.fetch("auto_create_mappings", false),
+      registered_at: Time.now.utc.iso8601,
+      last_synced_at: nil,
+      org_id: context[:auth][:org_id]
+    }
+
+    context[:endpoints].log_event("jira.project.registered", {
+      jira_project_key: jira_project_key,
+      org_id: context[:auth][:org_id]
+    })
+
+    { status: "registered", project: @projects[project_id] }
+  rescue ArgumentError => e
+    { success: false, error: e.message }
   end
 
-  delete "/projects/:id" do
-    project_id = params[:id].to_i
-    project = settings.projects.delete(project_id)
+  def handle_list_projects(payload, context)
+    kiket_project_id = payload["kiket_project_id"]
+    org_id = context[:auth][:org_id]
 
-    halt 404, { error: "Project not found" }.to_json unless project
+    projects = @projects.select { |_, p| p[:org_id] == org_id }
+    projects = projects.select { |_, p| p[:kiket_project_id] == kiket_project_id } if kiket_project_id
+
+    { projects: projects.values }
+  end
+
+  def handle_get_project(payload, context)
+    project_id = payload["id"].to_i
+    project = @projects[project_id]
+
+    return { error: "Project not found" } unless project
+
+    { project: project }
+  end
+
+  def handle_delete_project(payload, context)
+    project_id = payload["id"].to_i
+    project = @projects.delete(project_id)
+
+    return { error: "Project not found" } unless project
 
     # Clean up associated data
-    settings.issue_mappings.delete_if { |_, m| m[:project_id] == project_id }
-    settings.field_mappings.delete_if { |_, m| m[:project_id] == project_id }
-    settings.status_mappings.delete_if { |_, m| m[:project_id] == project_id }
+    @issue_mappings.delete_if { |_, m| m[:project_id] == project_id }
+    @field_mappings.delete_if { |_, m| m[:project_id] == project_id }
+    @status_mappings.delete_if { |_, m| m[:project_id] == project_id }
 
-    content_type :json
-    { status: "deleted" }.to_json
+    context[:endpoints].log_event("jira.project.deleted", {
+      jira_project_key: project[:jira_project_key],
+      org_id: context[:auth][:org_id]
+    })
+
+    { status: "deleted" }
   end
 
-  # Issue Mapping
+  # Issue Mapping Handlers
 
-  post "/issues/map" do
-    data = JSON.parse(request.body.read)
+  def handle_map_issue(payload, context)
+    project_id = payload["project_id"]
+    jira_issue_key = payload["jira_issue_key"]
+    kiket_issue_id = payload["kiket_issue_id"]
 
-    project_id = data["project_id"]
-    jira_issue_key = data["jira_issue_key"]
-    kiket_issue_id = data["kiket_issue_id"]
+    raise ArgumentError, "Missing required fields: project_id, jira_issue_key, kiket_issue_id" unless project_id && jira_issue_key && kiket_issue_id
 
-    halt 400, { error: "Missing required fields" }.to_json unless project_id && jira_issue_key && kiket_issue_id
+    project = @projects[project_id.to_i]
+    return { error: "Project not registered" } unless project
 
-    project = settings.projects[project_id.to_i]
-    halt 404, { error: "Project not registered" }.to_json unless project
-
-    mapping_id = settings.issue_mappings.length + 1
+    mapping_id = @issue_mappings.length + 1
 
     mapping = {
       id: mapping_id,
       project_id: project_id.to_i,
       jira_issue_key: jira_issue_key,
-      jira_issue_id: data["jira_issue_id"],
+      jira_issue_id: payload["jira_issue_id"],
       kiket_issue_id: kiket_issue_id,
-      sync_enabled: data.fetch("sync_enabled", true),
-      last_jira_update: data["last_jira_update"],
-      last_kiket_update: data["last_kiket_update"],
+      sync_enabled: payload.fetch("sync_enabled", true),
+      last_jira_update: payload["last_jira_update"],
+      last_kiket_update: payload["last_kiket_update"],
       last_synced_at: Time.now.utc.iso8601,
       created_at: Time.now.utc.iso8601,
       updated_at: Time.now.utc.iso8601
     }
 
-    settings.issue_mappings[mapping_id] = mapping
+    @issue_mappings[mapping_id] = mapping
 
-    content_type :json
-    status 201
-    { status: "mapped", mapping: mapping }.to_json
+    context[:endpoints].log_event("jira.issue.mapped", {
+      jira_issue_key: jira_issue_key,
+      kiket_issue_id: kiket_issue_id,
+      org_id: context[:auth][:org_id]
+    })
+
+    { status: "mapped", mapping: mapping }
+  rescue ArgumentError => e
+    { success: false, error: e.message }
   end
 
-  get "/issues/mappings" do
-    project_id = params["project_id"]
-    kiket_issue_id = params["kiket_issue_id"]
-    jira_issue_key = params["jira_issue_key"]
+  def handle_list_issue_mappings(payload, context)
+    project_id = payload["project_id"]
+    kiket_issue_id = payload["kiket_issue_id"]
+    jira_issue_key = payload["jira_issue_key"]
 
-    mappings = settings.issue_mappings.values
+    mappings = @issue_mappings.values
     mappings = mappings.select { |m| m[:project_id] == project_id.to_i } if project_id
     mappings = mappings.select { |m| m[:kiket_issue_id] == kiket_issue_id } if kiket_issue_id
     mappings = mappings.select { |m| m[:jira_issue_key] == jira_issue_key } if jira_issue_key
 
-    content_type :json
-    { mappings: mappings }.to_json
+    { mappings: mappings }
   end
 
-  put "/issues/mappings/:id" do
-    mapping_id = params[:id].to_i
-    mapping = settings.issue_mappings[mapping_id]
+  def handle_update_issue_mapping(payload, context)
+    mapping_id = payload["id"].to_i
+    mapping = @issue_mappings[mapping_id]
 
-    halt 404, { error: "Mapping not found" }.to_json unless mapping
+    return { error: "Mapping not found" } unless mapping
 
-    data = JSON.parse(request.body.read)
-
-    mapping[:sync_enabled] = data["sync_enabled"] if data.key?("sync_enabled")
-    mapping[:last_jira_update] = data["last_jira_update"] if data.key?("last_jira_update")
-    mapping[:last_kiket_update] = data["last_kiket_update"] if data.key?("last_kiket_update")
+    mapping[:sync_enabled] = payload["sync_enabled"] if payload.key?("sync_enabled")
+    mapping[:last_jira_update] = payload["last_jira_update"] if payload.key?("last_jira_update")
+    mapping[:last_kiket_update] = payload["last_kiket_update"] if payload.key?("last_kiket_update")
     mapping[:updated_at] = Time.now.utc.iso8601
 
-    content_type :json
-    { status: "updated", mapping: mapping }.to_json
+    { status: "updated", mapping: mapping }
   end
 
-  delete "/issues/mappings/:id" do
-    mapping_id = params[:id].to_i
-    mapping = settings.issue_mappings.delete(mapping_id)
+  def handle_delete_issue_mapping(payload, context)
+    mapping_id = payload["id"].to_i
+    mapping = @issue_mappings.delete(mapping_id)
 
-    halt 404, { error: "Mapping not found" }.to_json unless mapping
+    return { error: "Mapping not found" } unless mapping
 
-    content_type :json
-    { status: "deleted" }.to_json
+    { status: "deleted" }
   end
 
-  # Field Mapping
+  # Field Mapping Handlers
 
-  post "/fields/map" do
-    data = JSON.parse(request.body.read)
+  def handle_map_field(payload, context)
+    project_id = payload["project_id"]
+    jira_field_id = payload["jira_field_id"]
+    kiket_field_name = payload["kiket_field_name"]
 
-    project_id = data["project_id"]
-    jira_field_id = data["jira_field_id"]
-    kiket_field_name = data["kiket_field_name"]
+    raise ArgumentError, "Missing required fields" unless project_id && jira_field_id && kiket_field_name
 
-    halt 400, { error: "Missing required fields" }.to_json unless project_id && jira_field_id && kiket_field_name
+    project = @projects[project_id.to_i]
+    return { error: "Project not registered" } unless project
 
-    project = settings.projects[project_id.to_i]
-    halt 404, { error: "Project not registered" }.to_json unless project
-
-    mapping_id = settings.field_mappings.length + 1
+    mapping_id = @field_mappings.length + 1
 
     mapping = {
       id: mapping_id,
       project_id: project_id.to_i,
       jira_field_id: jira_field_id,
-      jira_field_name: data["jira_field_name"],
+      jira_field_name: payload["jira_field_name"],
       kiket_field_name: kiket_field_name,
-      field_type: data["field_type"],
-      transform_function: data["transform_function"],
-      sync_direction: data.fetch("sync_direction", "bidirectional"),
+      field_type: payload["field_type"],
+      transform_function: payload["transform_function"],
+      sync_direction: payload.fetch("sync_direction", "bidirectional"),
       created_at: Time.now.utc.iso8601
     }
 
-    settings.field_mappings[mapping_id] = mapping
+    @field_mappings[mapping_id] = mapping
 
-    content_type :json
-    status 201
-    { status: "mapped", mapping: mapping }.to_json
+    { status: "mapped", mapping: mapping }
+  rescue ArgumentError => e
+    { success: false, error: e.message }
   end
 
-  get "/fields/mappings" do
-    project_id = params["project_id"]
+  def handle_list_field_mappings(payload, context)
+    project_id = payload["project_id"]
 
-    mappings = settings.field_mappings.values
+    mappings = @field_mappings.values
     mappings = mappings.select { |m| m[:project_id] == project_id.to_i } if project_id
 
-    content_type :json
-    { mappings: mappings }.to_json
+    { mappings: mappings }
   end
 
-  delete "/fields/mappings/:id" do
-    mapping_id = params[:id].to_i
-    mapping = settings.field_mappings.delete(mapping_id)
+  def handle_delete_field_mapping(payload, context)
+    mapping_id = payload["id"].to_i
+    mapping = @field_mappings.delete(mapping_id)
 
-    halt 404, { error: "Field mapping not found" }.to_json unless mapping
+    return { error: "Field mapping not found" } unless mapping
 
-    content_type :json
-    { status: "deleted" }.to_json
+    { status: "deleted" }
   end
 
-  # Status Mapping
+  # Status Mapping Handlers
 
-  post "/status/map" do
-    data = JSON.parse(request.body.read)
+  def handle_map_status(payload, context)
+    project_id = payload["project_id"]
+    jira_status_id = payload["jira_status_id"]
+    kiket_status = payload["kiket_status"]
 
-    project_id = data["project_id"]
-    jira_status_id = data["jira_status_id"]
-    kiket_status = data["kiket_status"]
+    raise ArgumentError, "Missing required fields" unless project_id && jira_status_id && kiket_status
 
-    halt 400, { error: "Missing required fields" }.to_json unless project_id && jira_status_id && kiket_status
+    project = @projects[project_id.to_i]
+    return { error: "Project not registered" } unless project
 
-    project = settings.projects[project_id.to_i]
-    halt 404, { error: "Project not registered" }.to_json unless project
-
-    mapping_id = settings.status_mappings.length + 1
+    mapping_id = @status_mappings.length + 1
 
     mapping = {
       id: mapping_id,
       project_id: project_id.to_i,
       jira_status_id: jira_status_id,
-      jira_status_name: data["jira_status_name"],
+      jira_status_name: payload["jira_status_name"],
       kiket_status: kiket_status,
-      sync_on_transition: data.fetch("sync_on_transition", true),
+      sync_on_transition: payload.fetch("sync_on_transition", true),
       created_at: Time.now.utc.iso8601
     }
 
-    settings.status_mappings[mapping_id] = mapping
+    @status_mappings[mapping_id] = mapping
 
-    content_type :json
-    status 201
-    { status: "mapped", mapping: mapping }.to_json
+    { status: "mapped", mapping: mapping }
+  rescue ArgumentError => e
+    { success: false, error: e.message }
   end
 
-  get "/status/mappings" do
-    project_id = params["project_id"]
+  def handle_list_status_mappings(payload, context)
+    project_id = payload["project_id"]
 
-    mappings = settings.status_mappings.values
+    mappings = @status_mappings.values
     mappings = mappings.select { |m| m[:project_id] == project_id.to_i } if project_id
 
-    content_type :json
-    { mappings: mappings }.to_json
+    { mappings: mappings }
   end
 
-  delete "/status/mappings/:id" do
-    mapping_id = params[:id].to_i
-    mapping = settings.status_mappings.delete(mapping_id)
+  def handle_delete_status_mapping(payload, context)
+    mapping_id = payload["id"].to_i
+    mapping = @status_mappings.delete(mapping_id)
 
-    halt 404, { error: "Status mapping not found" }.to_json unless mapping
+    return { error: "Status mapping not found" } unless mapping
 
-    content_type :json
-    { status: "deleted" }.to_json
+    { status: "deleted" }
   end
 
-  # Issue Synchronization
+  # Issue Sync Handler
 
-  post "/sync/issue" do
-    data = JSON.parse(request.body.read)
+  def handle_sync_issue(payload, context)
+    mapping_id = payload["mapping_id"]
+    direction = payload["direction"]
 
-    mapping_id = data["mapping_id"]
-    direction = data["direction"] # 'jira_to_kiket', 'kiket_to_jira', 'bidirectional'
+    raise ArgumentError, "Missing required fields: mapping_id, direction" unless mapping_id && direction
 
-    halt 400, { error: "Missing required fields" }.to_json unless mapping_id && direction
+    mapping = @issue_mappings[mapping_id.to_i]
+    return { error: "Issue mapping not found" } unless mapping
 
-    mapping = settings.issue_mappings[mapping_id.to_i]
-    halt 404, { error: "Issue mapping not found" }.to_json unless mapping
-
-    # In production, this would make actual API calls to Jira and Kiket
     result = {
       mapping_id: mapping_id,
       direction: direction,
       jira_issue_key: mapping[:jira_issue_key],
       kiket_issue_id: mapping[:kiket_issue_id],
-      fields_synced: data.fetch("fields_synced", []),
-      comments_synced: data.fetch("comments_synced", 0),
-      attachments_synced: data.fetch("attachments_synced", 0),
+      fields_synced: payload.fetch("fields_synced", []),
+      comments_synced: payload.fetch("comments_synced", 0),
+      attachments_synced: payload.fetch("attachments_synced", 0),
       synced_at: Time.now.utc.iso8601
     }
 
     mapping[:last_synced_at] = result[:synced_at]
 
-    content_type :json
-    { status: "synced", result: result }.to_json
+    context[:endpoints].log_event("jira.issue.synced", {
+      mapping_id: mapping_id,
+      direction: direction,
+      org_id: context[:auth][:org_id]
+    })
+
+    { status: "synced", result: result }
+  rescue ArgumentError => e
+    { success: false, error: e.message }
   end
 
-  # Attachment Management
+  # Attachment Handlers
 
-  post "/attachments/mirror" do
-    data = JSON.parse(request.body.read)
+  def handle_mirror_attachment(payload, context)
+    mapping_id = payload["mapping_id"]
+    jira_attachment_id = payload["jira_attachment_id"]
+    direction = payload["direction"]
 
-    mapping_id = data["mapping_id"]
-    jira_attachment_id = data["jira_attachment_id"]
-    direction = data["direction"] # 'jira_to_kiket' or 'kiket_to_jira'
+    raise ArgumentError, "Missing required fields" unless mapping_id && jira_attachment_id && direction
 
-    halt 400, { error: "Missing required fields" }.to_json unless mapping_id && jira_attachment_id && direction
+    mapping = @issue_mappings[mapping_id.to_i]
+    return { error: "Issue mapping not found" } unless mapping
 
-    mapping = settings.issue_mappings[mapping_id.to_i]
-    halt 404, { error: "Issue mapping not found" }.to_json unless mapping
-
-    attachment_id = settings.attachments.length + 1
+    attachment_id = @attachments.length + 1
 
     attachment = {
       id: attachment_id,
       mapping_id: mapping_id.to_i,
       jira_attachment_id: jira_attachment_id,
-      kiket_attachment_id: data["kiket_attachment_id"],
-      filename: data["filename"],
-      file_size: data["file_size"],
-      mime_type: data["mime_type"],
+      kiket_attachment_id: payload["kiket_attachment_id"],
+      filename: payload["filename"],
+      file_size: payload["file_size"],
+      mime_type: payload["mime_type"],
       direction: direction,
       mirrored_at: Time.now.utc.iso8601
     }
 
-    settings.attachments[attachment_id] = attachment
+    @attachments[attachment_id] = attachment
 
-    content_type :json
-    status 201
-    { status: "mirrored", attachment: attachment }.to_json
+    { status: "mirrored", attachment: attachment }
+  rescue ArgumentError => e
+    { success: false, error: e.message }
   end
 
-  get "/attachments" do
-    mapping_id = params["mapping_id"]
+  def handle_list_attachments(payload, context)
+    mapping_id = payload["mapping_id"]
 
-    attachments = settings.attachments.values
+    attachments = @attachments.values
     attachments = attachments.select { |a| a[:mapping_id] == mapping_id.to_i } if mapping_id
 
-    content_type :json
-    { attachments: attachments }.to_json
+    { attachments: attachments }
   end
 
-  # Sync Jobs
+  # Sync Job Handlers
 
-  post "/sync/trigger" do
-    data = JSON.parse(request.body.read)
+  def handle_trigger_sync(payload, context)
+    project_id = payload["project_id"]
+    sync_type = payload["sync_type"]
 
-    project_id = data["project_id"]
-    sync_type = data["sync_type"] # 'full', 'incremental', 'issues_only', 'mappings_only'
+    raise ArgumentError, "Missing required fields: project_id, sync_type" unless project_id && sync_type
 
-    halt 400, { error: "Missing required fields" }.to_json unless project_id && sync_type
+    project = @projects[project_id.to_i]
+    return { error: "Project not registered" } unless project
+    return { error: "Sync not enabled" } unless project[:sync_enabled]
 
-    project = settings.projects[project_id.to_i]
-    halt 404, { error: "Project not registered" }.to_json unless project
-    halt 400, { error: "Sync not enabled" }.to_json unless project[:sync_enabled]
-
-    job_id = settings.sync_jobs.length + 1
+    job_id = @sync_jobs.length + 1
 
     job = {
       id: job_id,
       project_id: project_id.to_i,
       sync_type: sync_type,
-      sync_direction: data.fetch("sync_direction", project[:sync_direction]),
+      sync_direction: payload.fetch("sync_direction", project[:sync_direction]),
       status: "queued",
       issues_processed: 0,
       issues_total: nil,
@@ -396,52 +514,57 @@ class JiraExtension < Sinatra::Base
       created_at: Time.now.utc.iso8601
     }
 
-    settings.sync_jobs << job
+    @sync_jobs << job
 
-    # Simulate job processing
+    # Simulate job processing start
     job[:status] = "running"
     job[:started_at] = Time.now.utc.iso8601
     job[:issues_total] = 10
 
-    content_type :json
-    status 202
-    { status: "triggered", job: job }.to_json
+    context[:endpoints].log_event("jira.sync.triggered", {
+      project_id: project_id,
+      sync_type: sync_type,
+      job_id: job_id,
+      org_id: context[:auth][:org_id]
+    })
+
+    { status: "triggered", job: job }
+  rescue ArgumentError => e
+    { success: false, error: e.message }
   end
 
-  get "/sync/jobs" do
-    project_id = params["project_id"]
-    status_filter = params["status"]
-    limit = [ params.fetch("limit", "20").to_i, 100 ].min
+  def handle_list_sync_jobs(payload, context)
+    project_id = payload["project_id"]
+    status_filter = payload["status"]
+    limit = [payload.fetch("limit", 20).to_i, 100].min
 
-    jobs = settings.sync_jobs
+    jobs = @sync_jobs
     jobs = jobs.select { |j| j[:project_id] == project_id.to_i } if project_id
     jobs = jobs.select { |j| j[:status] == status_filter } if status_filter
     jobs = jobs.reverse.take(limit)
 
-    content_type :json
-    { jobs: jobs }.to_json
+    { jobs: jobs }
   end
 
-  get "/sync/jobs/:id" do
-    job_id = params[:id].to_i
-    job = settings.sync_jobs.find { |j| j[:id] == job_id }
+  def handle_get_sync_job(payload, context)
+    job_id = payload["id"].to_i
+    job = @sync_jobs.find { |j| j[:id] == job_id }
 
-    halt 404, { error: "Job not found" }.to_json unless job
+    return { error: "Job not found" } unless job
 
-    content_type :json
-    { job: job }.to_json
+    { job: job }
   end
 
-  # Webhooks
+  # Webhook Handlers
 
-  post "/webhooks/jira" do
-    payload = request.body.read
-    event_type = request.env["HTTP_X_ATLASSIAN_WEBHOOK_IDENTIFIER"]
+  def handle_jira_webhook(payload, context)
+    raw_payload = payload["raw_payload"]
+    event_type = payload["event_type"]
 
-    data = JSON.parse(payload)
+    data = raw_payload.is_a?(String) ? JSON.parse(raw_payload) : raw_payload
 
     delivery = {
-      id: settings.webhook_deliveries.length + 1,
+      id: @webhook_deliveries.length + 1,
       event_type: event_type,
       webhook_event: data["webhookEvent"],
       issue_key: data.dig("issue", "key"),
@@ -461,7 +584,7 @@ class JiraExtension < Sinatra::Base
       when "comment_created", "comment_updated"
         handle_comment_event(data)
       else
-        delivery[:error] = "Unsupported event type: #{data["webhookEvent"]}"
+        delivery[:error] = "Unsupported event type: #{data['webhookEvent']}"
       end
 
       delivery[:processed] = true
@@ -470,25 +593,25 @@ class JiraExtension < Sinatra::Base
       delivery[:processed] = false
     end
 
-    settings.webhook_deliveries << delivery
+    @webhook_deliveries << delivery
 
-    content_type :json
-    { status: "received", delivery_id: delivery[:id] }.to_json
+    context[:endpoints].log_event("jira.webhook.received", {
+      webhook_event: data["webhookEvent"],
+      issue_key: data.dig("issue", "key"),
+      org_id: context[:auth][:org_id]
+    })
+
+    { status: "received", delivery_id: delivery[:id] }
   end
 
-  post "/webhooks/kiket/issue_transitioned" do
-    data = JSON.parse(request.body.read)
+  def handle_kiket_issue_transitioned(payload, context)
+    issue_id = payload["issue_id"]
+    to_status = payload["to_status"]
 
-    issue_id = data["issue_id"]
-    to_status = data["to_status"]
+    mapping = @issue_mappings.values.find { |m| m[:kiket_issue_id] == issue_id }
+    return { status: "no_mapping" } unless mapping
 
-    # Find mapping
-    mapping = settings.issue_mappings.values.find { |m| m[:kiket_issue_id] == issue_id }
-
-    return { status: "no_mapping" }.to_json unless mapping
-
-    # Find status mapping
-    status_map = settings.status_mappings.values.find do |sm|
+    status_map = @status_mappings.values.find do |sm|
       sm[:project_id] == mapping[:project_id] && sm[:kiket_status] == to_status
     end
 
@@ -500,31 +623,29 @@ class JiraExtension < Sinatra::Base
       synced: !status_map.nil?
     }
 
-    content_type :json
-    { status: "processed", result: result }.to_json
+    { status: "processed", result: result }
   end
 
-  get "/webhooks/deliveries" do
-    limit = [ params.fetch("limit", "50").to_i, 100 ].min
-    offset = params.fetch("offset", "0").to_i
+  def handle_list_webhook_deliveries(payload, context)
+    limit = [payload.fetch("limit", 50).to_i, 100].min
+    offset = payload.fetch("offset", 0).to_i
 
-    deliveries = settings.webhook_deliveries.reverse[offset, limit] || []
+    deliveries = @webhook_deliveries.reverse[offset, limit] || []
 
-    content_type :json
     {
       deliveries: deliveries,
-      total: settings.webhook_deliveries.length,
+      total: @webhook_deliveries.length,
       limit: limit,
       offset: offset
-    }.to_json
+    }
   end
 
-  # Reports
+  # Report Handlers
 
-  get "/reports/sync_metrics" do
-    project_id = params["project_id"]
+  def handle_sync_metrics(payload, context)
+    project_id = payload["project_id"]
 
-    jobs = settings.sync_jobs
+    jobs = @sync_jobs
     jobs = jobs.select { |j| j[:project_id] == project_id.to_i } if project_id
 
     total_jobs = jobs.length
@@ -536,7 +657,6 @@ class JiraExtension < Sinatra::Base
     total_comments = jobs.sum { |j| j[:comments_synced] }
     total_attachments = jobs.sum { |j| j[:attachments_synced] }
 
-    content_type :json
     {
       total_jobs: total_jobs,
       successful_jobs: successful_jobs,
@@ -546,36 +666,33 @@ class JiraExtension < Sinatra::Base
       total_issues_synced: total_issues,
       total_comments_synced: total_comments,
       total_attachments_synced: total_attachments,
-      active_mappings: settings.issue_mappings.values.count { |m| m[:sync_enabled] }
-    }.to_json
+      active_mappings: @issue_mappings.values.count { |m| m[:sync_enabled] }
+    }
   end
 
-  get "/reports/mapping_status" do
-    project_id = params["project_id"]
+  def handle_mapping_status(payload, context)
+    project_id = payload["project_id"]
 
-    mappings = settings.issue_mappings.values
+    mappings = @issue_mappings.values
     mappings = mappings.select { |m| m[:project_id] == project_id.to_i } if project_id
 
     total_mappings = mappings.length
     enabled_mappings = mappings.count { |m| m[:sync_enabled] }
-    recently_synced = mappings.count { |m| m[:last_synced_at] && Time.parse(m[:last_synced_at]) > Time.now - 86400 }
+    recently_synced = mappings.count { |m| m[:last_synced_at] && Time.parse(m[:last_synced_at]) > Time.now - 86_400 }
 
-    content_type :json
     {
       total_mappings: total_mappings,
       enabled_mappings: enabled_mappings,
       disabled_mappings: total_mappings - enabled_mappings,
       recently_synced_24h: recently_synced,
-      projects: settings.projects.length
-    }.to_json
+      projects: @projects.length
+    }
   end
 
-  # Export
+  def handle_export_mappings(payload, context)
+    project_id = payload["project_id"]
 
-  get "/export/mappings/csv" do
-    project_id = params["project_id"]
-
-    mappings = settings.issue_mappings.values
+    mappings = @issue_mappings.values
     mappings = mappings.select { |m| m[:project_id] == project_id.to_i } if project_id
 
     csv = "ID,Project ID,Jira Issue Key,Jira Issue ID,Kiket Issue ID,Sync Enabled,Last Synced At,Created At\n"
@@ -593,36 +710,17 @@ class JiraExtension < Sinatra::Base
       ].map { |v| "\"#{v}\"" }.join(",") + "\n"
     end
 
-    content_type "text/csv"
-    attachment "jira_mappings.csv"
-    csv
+    { format: "csv", content: csv, filename: "jira_mappings.csv" }
   end
 
-  # Error handling
-  error 400 do
-    content_type :json
-    { error: "Bad request" }.to_json
-  end
-
-  error 404 do
-    content_type :json
-    { error: "Not found" }.to_json
-  end
-
-  error 500 do
-    content_type :json
-    { error: "Internal server error" }.to_json
-  end
-
-  private
+  # Private webhook event handlers
 
   def handle_issue_created(data)
     issue = data["issue"]
     project_key = issue["fields"]["project"]["key"]
 
-    # Find project mapping
-    project = settings.projects.values.find { |p| p[:jira_project_key] == project_key }
-    nil unless project && project[:auto_create_mappings]
+    project = @projects.values.find { |p| p[:jira_project_key] == project_key }
+    return unless project && project[:auto_create_mappings]
 
     # Would create Kiket issue and mapping here
   end
@@ -631,13 +729,10 @@ class JiraExtension < Sinatra::Base
     issue = data["issue"]
     issue_key = issue["key"]
 
-    # Find mapping
-    mapping = settings.issue_mappings.values.find { |m| m[:jira_issue_key] == issue_key }
+    mapping = @issue_mappings.values.find { |m| m[:jira_issue_key] == issue_key }
     return unless mapping && mapping[:sync_enabled]
 
-    # Update last_jira_update timestamp
     mapping[:last_jira_update] = data["timestamp"]
-
     # Would sync changes to Kiket here
   end
 
@@ -645,25 +740,34 @@ class JiraExtension < Sinatra::Base
     issue = data["issue"]
     issue_key = issue["key"]
 
-    # Find mapping
-    mapping = settings.issue_mappings.values.find { |m| m[:jira_issue_key] == issue_key }
-    nil unless mapping
+    mapping = @issue_mappings.values.find { |m| m[:jira_issue_key] == issue_key }
+    return unless mapping
 
     # Would handle deletion sync based on project settings
   end
 
   def handle_comment_event(data)
     issue = data["issue"]
-    comment = data["comment"]
     issue_key = issue["key"]
 
-    # Find mapping
-    mapping = settings.issue_mappings.values.find { |m| m[:jira_issue_key] == issue_key }
+    mapping = @issue_mappings.values.find { |m| m[:jira_issue_key] == issue_key }
     return unless mapping
 
-    project = settings.projects[mapping[:project_id]]
-    nil unless project && project[:sync_comments]
+    project = @projects[mapping[:project_id]]
+    return unless project && project[:sync_comments]
 
     # Would sync comment to Kiket here
   end
+end
+
+# Run the extension
+if __FILE__ == $PROGRAM_NAME
+  extension = JiraExtension.new
+
+  Rack::Handler::Puma.run(
+    extension.app,
+    Host: ENV.fetch("HOST", "0.0.0.0"),
+    Port: ENV.fetch("PORT", 8080).to_i,
+    Threads: "0:16"
+  )
 end
