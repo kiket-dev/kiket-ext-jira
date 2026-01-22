@@ -4,6 +4,7 @@ extension:
   id: dev.kiket.ext.jira
   name: Jira Integration
   version: 1.0.0
+  api_version: v1
   description: Jira integration for bidirectional issue sync, status mapping, and attachment mirroring
   author: Kiket
   homepage: https://github.com/kiket-dev/kiket-ext-jira
