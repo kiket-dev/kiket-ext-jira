@@ -105,6 +105,40 @@ extension:
         handler:
           type: extension_event
           event: jira.exportMappings
+    workflow_actions:
+      - id: sync_to_jira
+        name: Sync Issue to Jira
+        icon: bi-arrow-repeat
+        description: Trigger a sync of the current issue to its mapped Jira issue when entering or exiting a state
+        handler:
+          type: extension_event
+          event: jira.workflowAction.syncToJira
+        parameters:
+          - key: sync_direction
+            type: select
+            label: Sync Direction
+            options:
+              - kiket_to_jira
+              - bidirectional
+            required: false
+      - id: create_jira_issue
+        name: Create Jira Issue
+        icon: bi-plus-circle
+        description: Create a new Jira issue linked to the current Kiket issue
+        handler:
+          type: extension_event
+          event: jira.workflowAction.createJiraIssue
+        parameters:
+          - key: jira_project
+            type: string
+            label: Jira Project Key
+            placeholder: "e.g. PROJ"
+            required: true
+          - key: issue_type
+            type: string
+            label: Jira Issue Type
+            placeholder: "e.g. Task, Bug, Story"
+            required: false
   jira_webhooks:
     endpoint: /webhooks/jira
     events:
