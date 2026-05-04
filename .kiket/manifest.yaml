@@ -16,10 +16,10 @@ extension:
     timeout: 30000
     required: true
   activationEvents:
-    - issue.created
-    - issue.transitioned
-    - issue.updated
-    - issue.commented
+    - case.created
+    - case.transitioned
+    - case.updated
+    - case.commented
   permissions:
     - issues:read
     - issues:write
@@ -35,22 +35,22 @@ extension:
     - attachment-mirroring
     - webhooks
   hooks:
-    - event: issue.created
+    - event: case.created
       endpoint: /webhooks/kiket/issue_created
       timeout: 5000
       retries: 1
       description: Create Jira issue when Kiket issue is created
-    - event: issue.transitioned
+    - event: case.transitioned
       endpoint: /webhooks/kiket/issue_transitioned
       timeout: 5000
       retries: 1
       description: Sync status changes to Jira
-    - event: issue.updated
+    - event: case.updated
       endpoint: /webhooks/kiket/issue_updated
       timeout: 5000
       retries: 1
       description: Sync issue updates to Jira
-    - event: issue.commented
+    - event: case.commented
       endpoint: /webhooks/kiket/issue_commented
       timeout: 5000
       retries: 1
@@ -63,7 +63,7 @@ extension:
         category: Jira
         icon: bi-arrow-repeat
         keywords: ["jira", "sync", "issue"]
-        context: issue
+        context: case
         handler:
           type: extension_event
           event: jira.syncIssue
@@ -73,7 +73,7 @@ extension:
         category: Jira
         icon: bi-link-45deg
         keywords: ["jira", "map", "link"]
-        context: issue
+        context: case
         handler:
           type: extension_event
           event: jira.createMapping
@@ -83,7 +83,7 @@ extension:
         category: Jira
         icon: bi-box-arrow-up-right
         keywords: ["jira", "view", "open"]
-        context: issue
+        context: case
         handler:
           type: extension_event
           event: jira.viewInJira

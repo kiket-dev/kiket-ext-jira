@@ -4,7 +4,7 @@ description: Create corresponding Jira issues when Kiket issues are created
 automations:
   - name: jira_sync_create
     trigger:
-      event: issue.created
+      event: case.created
       conditions:
         - field: project.settings.jira_sync
           operator: eq
@@ -14,5 +14,5 @@ automations:
         command: jira.createIssue
         params:
           project_key: "{{ project.settings.jira_project }}"
-          summary: "{{ issue.title }}"
-          description: "{{ issue.description }}"
+          summary: "{{ case.title }}"
+          description: "{{ case.description }}"

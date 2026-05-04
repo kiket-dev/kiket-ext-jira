@@ -34,7 +34,7 @@ Bi-directional sync between Kiket and Jira for teams migrating or working across
 automations:
   - name: sync_to_jira
     trigger:
-      event: issue.created
+      event: case.created
       conditions:
         - field: project.settings.jira_sync
           operator: eq
@@ -44,7 +44,7 @@ automations:
         command: jira.createIssue
         params:
           project_key: "{{ project.settings.jira_project }}"
-          issue_type: "{{ issue.type | jira_type_map }}"
+          issue_type: "{{ case.type | jira_type_map }}"
 ```
 
 ## Sync Modes
