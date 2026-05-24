@@ -1,10 +1,12 @@
 ﻿# kiket-ext-jira
 
-**Status:** **Legacy 1.x removed** — awaiting 2.0 evidence/event adapter rewrite
+Jira issue lifecycle and comment webhooks normalized into Kiket operational events and evidence via `@kiket/jira-adapter`.
 
-Kiket 2.0 extensions use `kiket-extension.yaml` at the repo root and TypeScript normalization via the [Kiket SDK](https://github.com/kiket-dev/kiket2/tree/main/sdk/nodejs). There is no `.kiket/` process config, no Ruby `app.rb`, and no custom_data modules or analytics dashboards.
+- Manifest: `kiket-extension.yaml`
+- Entry: `src/index.ts` re-exports the monorepo adapter
+- Docs: [Jira adapter guide](https://docs.kiket.dev/docs/integrations/jira-adapter)
 
-Execution plan: [extensions-execution.md](https://github.com/kiket-dev/kiket2/blob/main/docs/plans/roadmaps/extensions-execution.md)
+Execution plan: [extensions-execution.md](../../docs/plans/roadmaps/extensions-execution.md)
 
 ## License
 

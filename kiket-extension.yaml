@@ -1,0 +1,22 @@
+apiVersion: kiket.dev/v1
+kind: Extension
+metadata:
+  key: kiket-ext-jira
+  name: Jira Evidence Adapter
+  version: 1.0.0
+  description: Normalize Jira issue lifecycle and comment webhooks into Kiket case updates and evidence.
+spec:
+  sourceSystem: jira
+  ingestionScopes:
+    - raw-events:write
+    - evidence:write
+  sourceEventTypes:
+    - jira:issue_created
+    - jira:issue_updated
+    - comment_created
+  evidenceTypes:
+    - jira_issue
+    - jira_comment
+  retentionHints:
+    rawDays: 30
+    evidenceDays: 365
